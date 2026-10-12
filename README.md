@@ -2,15 +2,6 @@
 
 **Report:** [Project-Report-1.pdf](https://github.com/Nowkee/M8S_Assignment/blob/main/Report/Project-Report-1.pdf)
 
-<table>
-<tr><th>Name</th><th>Student ID</th></tr>
-<tr><td>Adham Zulhilmi Bin Zamri</td><td>22010261</td></tr>
-<tr><td>Affan Najiy Bin Rusdi</td><td>22010453</td></tr>
-<tr><td>Andrew Tan Joe Wen</td><td>22010175</td></tr>
-<tr><td>Luqman Bin Azman</td><td>22010284</td></tr>
-<tr><td>Muhammad Ikhwan Bin Mohd Azahari</td><td>22010398</td></tr>
-</table>
-
 ## 1. Aim
 
 In our proposal we said that the first thing we wanted to find out was whether a swarm of nanobots following chemical signals can make a skin wound heal faster. To test this we built a small agent based model (ABM) in Python using the Mesa library and compared the healing time for three cases:
