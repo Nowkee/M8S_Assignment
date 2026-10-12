@@ -1,5 +1,7 @@
 # Nanobot Swarm for Wound Healing: Comparing Healing Time
 
+**Report:** [Project-Report-1.pdf](https://github.com/Nowkee/M8S_Assignment/blob/main/Report/Project-Report-1.pdf)
+
 <table>
 <tr><th>Name</th><th>Student ID</th></tr>
 <tr><td>Adham Zulhilmi Bin Zamri</td><td>22010261</td></tr>
@@ -56,7 +58,7 @@ def move(self):
 
 ![Healing over time](healing_curves.png)
 
-*Figure 1: Average percentage of the wound healed over time. The dotted line is the 95% finish line.*
+_Figure 1: Average percentage of the wound healed over time. The dotted line is the 95% finish line._
 
 <table>
 <tr><th>Case</th><th>Runs that reached 95% (out of 20)</th><th>Mean healing time (steps)</th><th>Fastest and slowest run</th><th>Healed after 400 steps</th><th>Infected squares after 400 steps</th></tr>
@@ -65,15 +67,15 @@ def move(self):
 <tr><td>No nanobots</td><td>0</td><td>did not heal</td><td>none</td><td>53.6%</td><td>153.4</td></tr>
 </table>
 
-*Table 1: Results from 20 runs of each case. The random swarm time is only the average of the 13 runs that made it to 95%.*
+_Table 1: Results from 20 runs of each case. The random swarm time is only the average of the 13 runs that made it to 95%._
 
 ![Snapshots of one run](snapshots.png)
 
-*Figure 2: The same wound (seed 3) under each case at steps 0, 30, 60 and 150. Triangles are scouts, circles are cleaners and squares are carriers.*
+_Figure 2: The same wound (seed 3) under each case at steps 0, 30, 60 and 150. Triangles are scouts, circles are cleaners and squares are carriers._
 
 ![Live view of the three cases](live_view.gif)
 
-*Figure 3: Live view of the same wound being treated by each case at the same time, with the healing graph updating as the run goes on. The nanobot shapes are the same as in Figure 2.*
+_Figure 3: Live view of the same wound being treated by each case at the same time, with the healing graph updating as the run goes on. The nanobot shapes are the same as in Figure 2._
 
 **Signal following swarm.** This was clearly the fastest. It reached 95% healed in every run, on average in 72.5 steps, and by the end there was no infection left. In Figure 2 the bots quickly pile onto the orange infected patches and the blue damaged area, so the wound heals from the inside as well as from the edges.
 
@@ -110,6 +112,6 @@ A window opens showing the signal swarm, the random swarm and the wound with no 
 
 ## References
 
-1. R. Wu, Y. Zhu, X. Cai, S. Wu, L. Xu, and T. Yu, "Recent process in microrobots: From propulsion to swarming for biomedical applications," *Micromachines*, vol. 13, no. 9, Art. no. 1473, 2022.
-2. S. Guo and L. A. DiPietro, "Factors affecting wound healing," *J. Dent. Res.*, vol. 89, no. 3, pp. 219 to 229, 2010.
+1. R. Wu, Y. Zhu, X. Cai, S. Wu, L. Xu, and T. Yu, "Recent process in microrobots: From propulsion to swarming for biomedical applications," _Micromachines_, vol. 13, no. 9, Art. no. 1473, 2022.
+2. S. Guo and L. A. DiPietro, "Factors affecting wound healing," _J. Dent. Res._, vol. 89, no. 3, pp. 219 to 229, 2010.
 3. Mesa: Agent based modeling in Python, https://mesa.readthedocs.io
