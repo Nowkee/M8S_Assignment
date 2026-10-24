@@ -1,0 +1,466 @@
+<?xml version="1.0" encoding="utf-8"?>
+<model version="NetLogo 7.0.4" snapToGrid="true">
+  <code><![CDATA[; Nanobot swarm healing a skin wound, as a cellular automaton
+; Port of First-Submission/swarm.py (Python Mesa ABM) to NetLogo.
+; Every cell (patch) holds a tissue state and at most one nanobot.
+; Each phase of a tick is synchronous: all cells first compute next-* values
+; from the current grid, then all cells switch to the new values at once.
+; There are no turtles; everything lives in patches-own.
+
+globals [
+  heal-time      ; first tick with >= 95% of the wound healthy, -1 if not yet
+  wound-cells    ; the 331 patches inside the oval wound
+]
+
+patches-own [
+  wound?         ; part of the oval wound
+  state          ; 0 healthy, 1 damaged, 2 infected, 3 healing
+  bacteria       ; bacteria load on an infected cell
+  heal           ; healing progress, healthy at >= 1
+  signal         ; chemical signal given off by unhealed cells
+  marker         ; trail left by scouts
+  bot-role       ; 0 none, 1 scout, 2 cleaner, 3 carrier
+  bot-fuel       ; steps of fuel left
+  bot-medicine   ; doses of medicine left
+  target         ; neighbour cell this cell's bot wants to move to
+  chosen         ; neighbour cell whose bot this empty cell pulls in
+  ring?          ; temporary, used to find the gel ring at setup
+  next-state next-bacteria next-heal next-signal next-marker
+  next-role next-fuel next-medicine
+]
+
+; ---------------------------------------------------------------- setup
+
+to setup
+  clear-patches
+  clear-ticks
+  random-seed seed
+  set heal-time -1
+  set-current-plot "Wound healed"
+  clear-plot
+
+  ; oval wound in the middle, radii 12 and 9 (331 cells)
+  ask patches [
+    set wound? ((pxcor - 20) / 12) ^ 2 + ((pycor - 20) / 9) ^ 2 <= 1
+    set state ifelse-value wound? [ 1 ] [ 0 ]
+    set target nobody
+    set chosen nobody
+  ]
+  set wound-cells patches with [ wound? ]
+
+  ; four round infection patches of radius 3 inside the wound
+  repeat 4 [
+    let c one-of wound-cells
+    let cx [pxcor] of c
+    let cy [pycor] of c
+    ask wound-cells with [ (pxcor - cx) ^ 2 + (pycor - cy) ^ 2 <= 9 ] [
+      set state 2
+      set bacteria 0.6
+    ]
+  ]
+
+  ; 100 bots start in the gel ring, the cells up to 2 steps outside the wound
+  if mode != "none" [
+    ask patches [ set ring? wound? or any? neighbors with [ wound? ] ]
+    ask patches [ set next-state ring? or any? neighbors with [ ring? ] ]
+    let gel patches with [ next-state = true and not wound? ]
+    let spots [self] of n-of 100 gel     ; random order, one bot per cell
+    let roles (sentence n-values 20 [ 1 ] n-values 40 [ 2 ] n-values 40 [ 3 ])
+    (foreach spots roles [ [p r] ->
+      ask p [ set bot-role r set bot-fuel 300 set bot-medicine 30 ]
+    ])
+    ask patches [ set next-state 0 ]
+  ]
+
+  recolor
+  reset-ticks
+end
+
+; ---------------------------------------------------------------- go
+
+to go
+  if ticks >= 400 [ stop ]
+  step
+  if ticks >= 400 or (stop-at-95? and heal-time >= 0) [ stop ]
+end
+
+; one tick, in the same order as swarm.py
+to step
+  update-tissue
+  update-chemicals
+  if mode != "none" [ update-bots ]
+  tick
+  if heal-time < 0 and pct-healed >= 95 [ set heal-time ticks ]
+  recolor
+end
+
+; ---------------------------------------------------------------- tissue rule
+
+to update-tissue
+  ask patches [ tissue-rule ]
+  ask patches [
+    set state next-state
+    set bacteria next-bacteria
+    set heal next-heal
+  ]
+end
+
+; bacteria after logistic growth and the body's own killing, 0 if cleaned
+to-report grown-bacteria
+  if state != 2 [ report 0 ]
+  let b bacteria + 0.02 * bacteria * (1 - bacteria) - 0.004
+  report ifelse-value b > 0 [ b ] [ 0 ]
+end
+
+to tissue-rule
+  let s state
+  let b bacteria
+  let h heal
+  ; bacteria grow, the body kills a little, cleaned cells become damaged
+  if s = 2 [
+    set b grown-bacteria
+    if b <= 0 [ set s 1 set b 0 ]
+  ]
+  let open? (s = 1 or s = 3)
+  let infected-now? false
+  if open? [
+    ; infection jumps in with probability 0.01 * pressure,
+    ; pressure = spread() of the bacteria field * 8 (this cell holds none)
+    let pressure (0.5 * (sum [grown-bacteria] of neighbors) / 8) * 0.95 * 8
+    if random-float 1 < 0.01 * pressure [
+      set s 2 set b 0.3 set h 0
+      set infected-now? true
+    ]
+  ]
+  ; the body heals open cells next to healthy tissue
+  if open? and not infected-now? and any? neighbors with [ state = 0 ] [
+    set h h + 0.02 * (0.5 + random-float 1)
+    set s 3
+  ]
+  if h >= 1 and s != 2 [ set s 0 ]
+  set next-state s
+  set next-bacteria b
+  set next-heal h
+end
+
+; ---------------------------------------------------------------- signal rule
+
+; spread() from swarm.py: half stays, half is shared over the 8 neighbours,
+; then 5% fades. Cells outside the grid count as 0.
+to update-chemicals
+  ask patches [
+    ; rule 4: only unhealed cells give off a signal
+    let around sum [ signal + ifelse-value state != 0 [ 1 ] [ 0 ] ] of neighbors
+    let own signal + ifelse-value state != 0 [ 1 ] [ 0 ]
+    set next-signal (0.5 * own + 0.5 * around / 8) * 0.95
+    ; scout markers spread and are wiped on healthy cells
+    set next-marker ifelse-value state != 0
+      [ (0.5 * marker + 0.5 * (sum [marker] of neighbors) / 8) * 0.95 ] [ 0 ]
+  ]
+  ask patches [
+    set signal next-signal
+    set marker next-marker
+  ]
+end
+
+; ---------------------------------------------------------------- bot rule
+
+to update-bots
+  ; pass 1: every bot works on its own cell or picks a target neighbour
+  ask patches [
+    set next-state state set next-bacteria bacteria set next-heal heal
+    set next-marker marker
+    set next-role bot-role set next-fuel bot-fuel set next-medicine bot-medicine
+    set target nobody set chosen nobody
+  ]
+  ask patches with [ bot-role > 0 ] [ bot-work ]
+  ; pass 2: every empty cell pulls in one bot that targeted it, at random
+  ask patches with [ bot-role = 0 ] [
+    let movers neighbors with [ target = myself ]
+    if any? movers [ set chosen one-of movers ]
+  ]
+  ; all cells switch at once
+  ask patches [ bot-commit ]
+end
+
+to bot-work
+  let worked? false
+  if bot-role = 1 and state != 0 [
+    set next-marker marker + 2                ; scout leaves a trail
+  ]
+  if bot-role = 2 and state = 2 [
+    set next-bacteria bacteria - 0.2          ; cleaner kills bacteria
+    set next-medicine bot-medicine - 1
+    set worked? true
+  ]
+  if bot-role = 3 and (state = 1 or state = 3) [
+    set next-heal heal + 0.25                 ; rule 3: carrier only on clean cells
+    set next-state 3
+    set next-medicine bot-medicine - 1
+    set worked? true
+  ]
+  set next-fuel bot-fuel - 1
+  ifelse next-fuel <= 0 or next-medicine <= 0
+    [ set next-role 0 ]                       ; rule 5: bot is used up
+    [ if not worked? [ set target pick-target ] ]
+end
+
+; rule 1: follow signal + marker, with a random step 15% of the time
+; rule 2: only empty neighbours can be targeted (one bot per cell)
+to-report pick-target
+  let free neighbors with [ bot-role = 0 ]
+  if not any? free [ report nobody ]
+  if mode = "random" or random-float 1 < 0.15 [ report one-of free ]
+  let best max [ signal + marker ] of free
+  report one-of free with [ signal + marker = best ]
+end
+
+to bot-commit
+  set state next-state
+  set bacteria next-bacteria
+  set heal next-heal
+  set marker next-marker
+  ifelse bot-role = 0 [
+    if chosen != nobody [
+      set bot-role [next-role] of chosen
+      set bot-fuel [next-fuel] of chosen
+      set bot-medicine [next-medicine] of chosen
+    ]
+  ] [
+    ifelse target != nobody and [chosen] of target = self
+      [ set bot-role 0 set bot-fuel 0 set bot-medicine 0 ]   ; moved away
+      [ set bot-role next-role set bot-fuel next-fuel set bot-medicine next-medicine ]
+  ]
+end
+
+; ---------------------------------------------------------------- reporters
+
+to-report pct-healed
+  report 100 * count wound-cells with [ state = 0 ] / count wound-cells
+end
+
+to-report infected-cells
+  report count patches with [ state = 2 ]
+end
+
+to-report bots-left
+  report count patches with [ bot-role > 0 ]
+end
+
+; same colours as snapshots.png, bots drawn on top in one colour per role
+to recolor
+  ask patches [
+    set pcolor item state (list [240 239 236] [42 120 214] [235 104 52] [27 175 122])
+    if bot-role = 1 [ set pcolor [250 210 0] ]   ; scout, yellow
+    if bot-role = 2 [ set pcolor [20 20 20] ]    ; cleaner, black
+    if bot-role = 3 [ set pcolor [130 40 170] ]  ; carrier, purple
+  ]
+end
+
+; ---------------------------------------------------------------- experiment
+
+; 3 modes x 20 seeds, 400 ticks each. Plots the mean healing curve per mode,
+; prints the same summary as swarm.py and writes the results files.
+to run-experiment
+  let keep-stop stop-at-95?
+  set stop-at-95? false
+  no-display
+  set-current-plot "Healing over time"
+  clear-plot
+  let lines []
+  foreach ["signal" "random" "none"] [ m ->
+    set mode m
+    let curves []
+    let times []
+    let healed-end []
+    let infected-end []
+    let bots-end []
+    foreach range 20 [ s ->
+      set seed s
+      setup
+      let curve (list pct-healed)
+      repeat 400 [ step set curve lput pct-healed curve ]
+      set curves lput curve curves
+      if heal-time >= 0 [ set times lput heal-time times ]
+      set healed-end lput pct-healed healed-end
+      set infected-end lput infected-cells infected-end
+      set bots-end lput bots-left bots-end
+    ]
+    ; mean curve over the 20 runs
+    set-current-plot "Healing over time"
+    set-current-plot-pen m
+    foreach range 401 [ t -> plotxy t mean map [ c -> item t c ] curves ]
+    let line (word m "  healed in " length times "/20 runs | mean time "
+      ifelse-value empty? times [ "nan (sd nan, min -, max -)" ] [
+        (word precision mean times 1 " (sd " precision pop-sd times 1
+          ", min " min times ", max " max times ")") ]
+      " | healed at end " precision mean healed-end 1
+      "% | infected at end " precision mean infected-end 1
+      " | bots left " precision mean bots-end 1)
+    print line
+    set lines lput line lines
+  ]
+  set-current-plot-pen "95%"
+  plotxy 0 95
+  plotxy 400 95
+
+  if file-exists? "results/summary.txt" [ file-delete "results/summary.txt" ]
+  file-open "results/summary.txt"
+  foreach lines [ l -> file-print l ]
+  file-close
+  export-plot "Healing over time" "results/healing_curves.csv"
+  make-snapshots
+  set stop-at-95? keep-stop
+  display
+  ; the PNG of the plot needs the GUI, so skip it when running headless
+  carefully [ export-interface "results/healing_curves.png" ] [ print "export-interface skipped (headless)" ]
+end
+
+; population standard deviation, like numpy's np.std
+to-report pop-sd [ xs ]
+  let m mean xs
+  report sqrt mean map [ x -> (x - m) ^ 2 ] xs
+end
+
+; seed 3 under each mode at ticks 0, 30, 60 and 150
+to make-snapshots
+  foreach ["signal" "random" "none"] [ m ->
+    set mode m
+    set seed 3
+    setup
+    foreach [0 30 60 150] [ t ->
+      while [ ticks < t ] [ step ]
+      export-view (word "results/snapshot-" m "-" t ".png")
+    ]
+  ]
+end]]></code>
+  <widgets>
+    <view x="235" wrappingAllowedX="false" y="10" frameRate="30.0" minPycor="0" height="484" showTickCounter="true" patchSize="12.0" fontSize="10" wrappingAllowedY="false" width="484" tickCounterLabel="ticks" maxPycor="39" updateMode="1" maxPxcor="39" minPxcor="0"></view>
+    <button x="10" y="10" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="65" display="setup">setup</button>
+    <button x="80" y="10" height="40" disableUntilTicks="true" forever="true" kind="Observer" width="65" display="go">go</button>
+    <button x="150" y="10" height="40" disableUntilTicks="true" forever="false" kind="Observer" width="75" display="go-once">go</button>
+    <chooser x="10" y="60" height="60" variable="mode" current="2" width="105" display="mode">
+      <choice type="string" value="signal"></choice>
+      <choice type="string" value="random"></choice>
+      <choice type="string" value="none"></choice>
+    </chooser>
+    <input x="120" multiline="false" y="60" height="60" variable="seed" type="number" width="105">3.0</input>
+    <switch x="10" y="130" height="40" on="true" variable="stop-at-95?" width="215" display="stop-at-95?"></switch>
+    <monitor x="10" precision="1" y="180" height="60" fontSize="11" width="105" display="% healed">pct-healed</monitor>
+    <monitor x="120" precision="0" y="180" height="60" fontSize="11" width="105" display="infected cells">infected-cells</monitor>
+    <monitor x="10" precision="0" y="245" height="60" fontSize="11" width="105" display="bots left">bots-left</monitor>
+    <monitor x="120" precision="0" y="245" height="60" fontSize="11" width="105" display="ticks">ticks</monitor>
+    <monitor x="10" precision="0" y="310" height="60" fontSize="11" width="215" display="healing time (-1 = not yet)">heal-time</monitor>
+    <note x="10" y="380" backgroundDark="0" fontSize="11" width="215" markdown="false" height="110" textColorDark="-1" textColorLight="-16777216" backgroundLight="0">Tissue: grey = healthy, blue = damaged, orange = infected, green = healing.
+Bots: yellow = scout, black = cleaner, purple = carrier.</note>
+    <plot x="730" autoPlotX="false" yMax="100.0" autoPlotY="false" yAxis="% healed" y="10" xMin="0.0" height="240" legend="true" xMax="400.0" yMin="0.0" width="420" xAxis="tick" display="Wound healed">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="healed" color="-13993770" legend="true">
+        <setup></setup>
+        <update>plot pct-healed</update>
+      </pen>
+      <pen interval="1.0" mode="0" display="95%" color="-16777216" legend="true">
+        <setup></setup>
+        <update>plot 95</update>
+      </pen>
+    </plot>
+    <button x="730" y="260" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="420" display="run-experiment (3 modes x 20 seeds, writes results/)">run-experiment</button>
+    <plot x="730" autoPlotX="false" yMax="100.0" autoPlotY="false" yAxis="Wound healed (%)" y="310" xMin="0.0" height="280" legend="true" xMax="400.0" yMin="0.0" width="420" xAxis="Time step" display="Healing over time">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="signal" color="-13993770" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="random" color="-1349580" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="none" color="-7764095" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+      <pen interval="1.0" mode="0" display="95%" color="-16777216" legend="true">
+        <setup></setup>
+        <update></update>
+      </pen>
+    </plot>
+  </widgets>
+  <info>## WHAT IS IT?
+
+A cellular automaton (CA) version of our First Submission nanobot swarm model (First-Submission/swarm.py). Each cell of a 40 by 40 grid is skin tissue (healthy, damaged, infected or healing) and can hold at most one nanobot (scout, cleaner or carrier). All cells update at the same time from their 8 neighbours.
+
+## HOW TO USE IT
+
+Pick a mode (signal, random or none) and a seed, press setup, then go. The run stops at 95% healed (if stop-at-95? is on) or at 400 ticks. The run-experiment button runs all 3 modes x 20 seeds and writes the results into the results folder.
+
+## CREDITS
+
+TEB2103 Modelling and Simulation, Universiti Teknologi PETRONAS.</info>
+  <turtleShapes>
+    <shape name="default" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="5"></point>
+        <point x="40" y="250"></point>
+        <point x="150" y="205"></point>
+        <point x="260" y="250"></point>
+      </polygon>
+    </shape>
+  </turtleShapes>
+  <linkShapes>
+    <shape name="default" curviness="0.0">
+      <lines>
+        <line x="-0.2" visible="false">
+          <dash value="0.0"></dash>
+          <dash value="1.0"></dash>
+        </line>
+        <line x="0.0" visible="true">
+          <dash value="1.0"></dash>
+          <dash value="0.0"></dash>
+        </line>
+        <line x="0.2" visible="false">
+          <dash value="0.0"></dash>
+          <dash value="1.0"></dash>
+        </line>
+      </lines>
+      <indicator>
+        <shape name="link direction" rotatable="true" editableColorIndex="0">
+          <line endX="90" startY="150" marked="true" color="-1920102913" endY="180" startX="150"></line>
+          <line endX="210" startY="150" marked="true" color="-1920102913" endY="180" startX="150"></line>
+        </shape>
+      </indicator>
+    </shape>
+  </linkShapes>
+  <previewCommands>setup repeat 75 [ go ]</previewCommands>
+  <experiments>
+    <experiment name="ca-experiment" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="false" timeLimit="400">
+      <setup>setup</setup>
+      <go>go</go>
+      <metrics>
+        <metric>heal-time</metric>
+        <metric>pct-healed</metric>
+        <metric>infected-cells</metric>
+        <metric>bots-left</metric>
+      </metrics>
+      <constants>
+        <enumeratedValueSet variable="mode">
+          <value value="&quot;signal&quot;"></value>
+          <value value="&quot;random&quot;"></value>
+          <value value="&quot;none&quot;"></value>
+        </enumeratedValueSet>
+        <steppedValueSet variable="seed" first="0" step="1" last="19"></steppedValueSet>
+        <enumeratedValueSet variable="stop-at-95?">
+          <value value="false"></value>
+        </enumeratedValueSet>
+      </constants>
+    </experiment>
+    <experiment name="summary" repetitions="1" sequentialRunOrder="true" runMetricsEveryStep="false" timeLimit="1">
+      <setup>run-experiment</setup>
+      <go>stop</go>
+      <metrics>
+        <metric>ticks</metric>
+      </metrics>
+    </experiment>
+  </experiments>
+</model>
