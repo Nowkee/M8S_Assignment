@@ -1,0 +1,3 @@
+signal  healed in 20/20 runs | mean time 86.9 (sd 4.9, min 76, max 95) | healed at end 100% | infected at end 0 | bots left 0
+random  healed in 15/20 runs | mean time 243.9 (sd 48.7, min 174, max 339) | healed at end 96.6% | infected at end 11.1 | bots left 0
+none  healed in 0/20 runs | mean time nan (sd nan, min -, max -) | healed at end 50.5% | infected at end 162.8 | bots left 0
